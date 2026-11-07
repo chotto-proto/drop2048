@@ -1,0 +1,1496 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Drop 2048</title>
+<meta name="description" content="列を選んで数字を落とし、同じ数字を合体させて2048を目指す落ちものパズル。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #1d2330;
+    --panel: #2a3242;
+    --cell: #313a4c;
+    --text: #f2efe6;
+    --muted: #9aa3b5;
+    --accent: #e0b44c;
+    --warn: #e0674c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: var(--bg); color: var(--text);
+    font-family: system-ui, "Hiragino Sans", "Yu Gothic", sans-serif;
+    padding: 16px;
+  }
+  .wrap { width: min(340px, 100%); }
+  header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  h1 { font-size: 24px; margin: 0; flex: 1; }
+  .stat { background: var(--panel); border-radius: 8px; padding: 6px 10px; text-align: center; min-width: 70px; }
+  .stat small { display: block; font-size: 11px; color: var(--muted); }
+  .stat b { font-size: 16px; font-variant-numeric: tabular-nums; }
+  .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .bar .label { font-size: 12px; color: var(--muted); }
+  #next { width: 40px; height: 40px; position: relative; }
+  .bar .spacer { flex: 1; }
+  #rise { font-size: 12px; color: var(--muted); text-align: right; line-height: 1.3; }
+  #rise b { font-size: 16px; color: var(--text); font-variant-numeric: tabular-nums; }
+  #rise.warn b { color: var(--warn); }
+  #rise.warn { animation: blink .6s ease-in-out infinite alternate; }
+  /* 落下お邪魔の予告（直前の1手だけ表示） */
+  .warnzone { position: relative; height: 30px; margin-bottom: 4px; visibility: hidden; }
+  .warnzone.show { visibility: visible; }
+  .mark { position: absolute; top: 0; height: 100%; width: 20%; padding: 0 3px; pointer-events: none; }
+  .mark span {
+    display: flex; align-items: center; justify-content: center; gap: 3px;
+    height: 100%; border-radius: 8px; background: var(--warn); color: #fff;
+    font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums;
+    box-shadow: 0 2px 8px rgba(224, 103, 76, .45);
+    animation: nudge .7s ease-in-out infinite alternate;
+  }
+  @keyframes nudge { to { transform: translateY(3px); } }
+  .dangercol {
+    position: absolute; top: 0; height: 100%; width: 20%; z-index: 2; pointer-events: none;
+    background: linear-gradient(rgba(224, 103, 76, .32), rgba(224, 103, 76, .06));
+    border-radius: 8px; display: none;
+    animation: blink .7s ease-in-out infinite alternate;
+  }
+  .dangercol.show { display: block; }
+  @keyframes blink { to { opacity: .55; } }
+  button {
+    font-size: 14px; padding: 8px 14px; border: none; border-radius: 8px;
+    background: var(--accent); color: var(--bg); font-weight: 700; cursor: pointer;
+  }
+
+  .board { background: var(--panel); border-radius: 12px; padding: 8px; user-select: none; touch-action: manipulation; }
+  .zone, .field { position: relative; width: 100%; }
+  .zone { aspect-ratio: 5 / 1; margin-bottom: 6px; }
+  .field { aspect-ratio: var(--cols, 5) / var(--rows, 7); cursor: pointer; overflow: hidden; border-radius: 6px; }
+  .field.shake { animation: shake .3s ease-out; }
+  @keyframes shake {
+    20% { transform: translate(-4px, 2px); }
+    40% { transform: translate(4px, -2px); }
+    60% { transform: translate(-3px, 1px); }
+    80% { transform: translate(2px, 0); }
+  }
+
+  .slot, .tile, .colhl, .fx { position: absolute; width: 20%; height: calc(100% / var(--rows, 7)); }
+  .zone .tile { height: 100%; top: 0; }
+  .slot { padding: 3px; }
+  .slot::after { content: ""; display: block; width: 100%; height: 100%; background: var(--cell); border-radius: 7px; }
+  .colhl { top: 0; height: 100%; background: rgba(224, 180, 76, .10); border-radius: 8px; transition: left .08s; pointer-events: none; }
+
+  .tile { padding: 3px; transition: top .15s ease-in, left .15s ease-out, opacity .18s; pointer-events: none; }
+  .face {
+    width: 100%; height: 100%; border-radius: 7px;
+    display: grid; place-items: center;
+    font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1;
+  }
+  .tile.pop .face { animation: pop .18s ease-out; }
+  .face.stone {
+    background: repeating-linear-gradient(135deg, #5d6372 0 6px, #535968 6px 12px) !important;
+    color: #d6d9e0 !important; font-size: 11px !important; letter-spacing: 2px;
+    box-shadow: inset 0 0 0 2px rgba(0,0,0,.25);
+  }
+  .tile.hit .face { animation: hit .25s ease-out; }
+  /* 氷：数字の上に氷が張る */
+  .face { position: relative; }
+  .face.ice::after {
+    content: ""; position: absolute; inset: 0; border-radius: 7px;
+    background:
+      linear-gradient(135deg, rgba(255,255,255,.55) 0 18%, transparent 18% 40%, rgba(255,255,255,.35) 40% 46%, transparent 46%),
+      rgba(170, 220, 255, .55);
+    box-shadow: inset 0 0 0 3px rgba(220, 245, 255, .95), 0 0 10px rgba(150, 210, 255, .6);
+  }
+  .face.ice::before {
+    content: "❄"; position: absolute; top: 2px; right: 4px; z-index: 1;
+    font-size: 12px; line-height: 1; color: #fff; text-shadow: 0 0 4px rgba(120, 190, 255, .9);
+  }
+  .tile.freeze .face::after { animation: freeze .35s ease-out; }
+  /* 鎖 */
+  .face.chain { outline: 3px dashed #d7dbe3; outline-offset: -5px; }
+  .face.chain::before {
+    content: "⛓" attr(data-chain); position: absolute; right: 3px; bottom: 2px; z-index: 1;
+    font-size: 11px; font-weight: 800; line-height: 1; color: #fff;
+    background: #4a5163; border-radius: 6px; padding: 2px 4px;
+  }
+  .tile.unchain .face { animation: melt .4s ease-out; }
+  @keyframes freeze { from { opacity: 0; transform: scale(1.4); } }
+  .tile.melt .face { animation: melt .4s ease-out; }
+  @keyframes melt { 40% { transform: scale(1.12); filter: brightness(1.5); } }
+  @keyframes hit {
+    25% { transform: translateX(-3px) rotate(-3deg); }
+    50% { transform: translateX(3px) rotate(3deg); }
+    75% { transform: translateX(-2px); }
+  }
+  .tile.bigpop .face { animation: bigpop .4s ease-out; }
+  .tile.vanish { opacity: 0; }
+  .ghost { opacity: .55; transition: left .08s; }
+  .tile.clear { transition: none; z-index: 3; }
+  .tile.clear .face { animation: clear .55s ease-out forwards; }
+  @keyframes clear {
+    0% { transform: scale(1); opacity: 1; filter: brightness(1); }
+    40% { transform: scale(1.35); opacity: 1; filter: brightness(2.2); }
+    100% { transform: scale(1.9); opacity: 0; filter: brightness(2.5); }
+  }
+  @keyframes pop { 50% { transform: scale(1.18); } }
+  @keyframes bigpop {
+    0% { transform: scale(1); filter: brightness(1); }
+    35% { transform: scale(1.35); filter: brightness(1.6); }
+    100% { transform: scale(1); filter: brightness(1); }
+  }
+
+  /* 大きい合体・連鎖のエフェクト */
+  .fx { pointer-events: none; z-index: 4; display: grid; place-items: center; }
+  .fx .ring {
+    position: absolute; inset: 0; border-radius: 10px;
+    border: 3px solid var(--accent);
+    animation: ring .45s ease-out forwards;
+  }
+  @keyframes ring {
+    from { transform: scale(.8); opacity: 1; }
+    to { transform: scale(1.9); opacity: 0; }
+  }
+  .fx .mult {
+    position: relative; font-size: 18px; font-weight: 800; color: var(--accent);
+    text-shadow: 0 2px 6px rgba(0,0,0,.6);
+    animation: mult .7s ease-out forwards;
+  }
+  @keyframes mult {
+    0% { transform: translateY(0) scale(.6); opacity: 0; }
+    25% { transform: translateY(-30%) scale(1.15); opacity: 1; }
+    100% { transform: translateY(-110%) scale(1); opacity: 0; }
+  }
+
+  #chain {
+    position: absolute; left: 0; right: 0; top: 38%; text-align: center;
+    font-size: 30px; font-weight: 800; color: var(--accent);
+    text-shadow: 0 2px 8px rgba(0,0,0,.5);
+    opacity: 0; pointer-events: none; z-index: 5;
+  }
+  #chain.show { animation: chain .9s ease-out; }
+  @keyframes chain {
+    0% { opacity: 0; transform: scale(.6); }
+    20% { opacity: 1; transform: scale(1.1); }
+    75% { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: translateY(-16px); }
+  }
+
+  #overlay {
+    position: absolute; inset: 0; z-index: 10;
+    background: rgba(29, 35, 48, .85);
+    display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  }
+  #overlay.show { display: flex; }
+  #overlay h2 { margin: 0; font-size: 26px; }
+  #overlay p { margin: 0; color: var(--muted); }
+  .hint { font-size: 12px; color: var(--muted); text-align: center; margin-top: 10px; }
+
+  /* ステージ表示 */
+  .stage {
+    background: var(--panel); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .stage .num { font-size: 12px; color: var(--muted); line-height: 1.1; text-align: center; }
+  .stage .num b { display: block; font-size: 22px; color: var(--accent); }
+  .stage .desc { flex: 1; font-size: 13px; line-height: 1.4; }
+  .stage .desc small { color: var(--muted); }
+  .stage .count { font-size: 11px; color: var(--muted); text-align: right; line-height: 1.3; }
+  .stage .count b { font-size: 18px; color: var(--text); font-variant-numeric: tabular-nums; }
+  .stage .count.warn b { color: var(--warn); }
+  .stage .count.warn { animation: blink .6s ease-in-out infinite alternate; }
+
+  #banner {
+    position: absolute; inset: 0; z-index: 8; pointer-events: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    background: rgba(29, 35, 48, .7); opacity: 0;
+  }
+  #banner.show { animation: banner 1.6s ease-out forwards; }
+  #banner .t { font-size: 34px; font-weight: 800; color: var(--accent); letter-spacing: .05em; }
+  #banner .d { font-size: 14px; text-align: center; padding: 0 12px; }
+  /* 開発用パネル */
+  /* お邪魔の説明ページ */
+  .ghostbtn { background: var(--panel); color: var(--text); }
+  .stage .desc.link { cursor: pointer; }
+  .stage .desc.link #stageDesc { text-decoration: underline dotted rgba(242, 239, 230, .4); text-underline-offset: 3px; }
+  #help {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    background: rgba(10, 13, 20, .72); padding: 16px; overflow-y: auto;
+  }
+  #help.show { display: block; }
+  .sheet {
+    width: min(380px, 100%); margin: 0 auto; background: var(--bg);
+    border: 1px solid #3a4357; border-radius: 16px; padding: 18px 16px 8px;
+  }
+  .sheet-head { display: flex; align-items: center; margin-bottom: 6px; }
+  .sheet-head h2 { flex: 1; margin: 0; font-size: 20px; }
+  .closebtn { background: var(--panel); color: var(--text); width: 36px; height: 36px; padding: 0; font-size: 18px; }
+  .sheet .lead { font-size: 13px; color: var(--muted); line-height: 1.6; margin: 0 0 14px; }
+  .jump { display: flex; gap: 6px; margin-bottom: 14px; }
+  .jump button { flex: 1; padding: 7px 0; font-size: 13px; background: var(--panel); color: var(--text); }
+  .card {
+    background: var(--panel); border-radius: 12px; padding: 14px; margin-bottom: 12px;
+    scroll-margin-top: 12px; transition: box-shadow .3s;
+  }
+  .card.flash { box-shadow: 0 0 0 2px var(--accent); }
+  .rules { margin: 0; padding-left: 1.2em; font-size: 13px; line-height: 1.65; }
+  .rules li + li { margin-top: 6px; }
+  .rules b { color: var(--heading); }
+  .sheet h3.sec { margin: 18px 0 6px; font-size: 16px; }
+  .card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .sample { position: relative; width: 52px; height: 52px; flex: none; }
+  .sample .tile { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; }
+  .sample .face { font-size: 20px; }
+  .sample .face.stone { font-size: 12px !important; }
+  .sample.fallmark span {
+    display: flex; align-items: center; justify-content: center; height: 100%;
+    border-radius: 10px; background: var(--warn); color: #fff; font-weight: 800; font-size: 17px;
+    box-shadow: 0 2px 8px rgba(224, 103, 76, .45);
+  }
+  .card-head h3 { margin: 0; font-size: 17px; }
+  .card-head p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+  .card dl { margin: 0; font-size: 13px; line-height: 1.6; }
+  .card dt { font-weight: 700; color: var(--accent); font-size: 12px; margin-top: 8px; }
+  .card dd { margin: 2px 0 0; }
+  .card ul { margin: 0; padding-left: 1.1em; }
+  .card li + li { margin-top: 2px; }
+  .card .tip { margin-top: 10px; font-size: 12px; background: rgba(224, 180, 76, .1); border-radius: 8px; padding: 8px 10px; line-height: 1.55; }
+  .card .tip b { color: var(--accent); }
+  .dev {
+    margin-top: 14px; padding: 10px; border: 1px dashed #556075; border-radius: 10px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted);
+  }
+  .dev .tag { width: 100%; font-weight: 700; color: var(--warn); }
+  .dev select { flex: 1; min-width: 0; font-size: 14px; padding: 6px 8px; border-radius: 6px; background: var(--panel); color: var(--text); border: 1px solid #556075; }
+  .dev button { padding: 6px 12px; font-size: 13px; }
+  .dev .sub { background: var(--panel); color: var(--text); }
+  @keyframes banner {
+    0% { opacity: 0; } 12% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; }
+  }
+
+  /* ================= テーマ（色・形・フォント） =================
+     色は下の変数で決まる。html の data-theme でテーマを切り替える */
+  :root, html[data-theme="orange"] {
+    --bg: #fff6ec; --panel: #ffffff; --cell: #f6eadc; --board: #f9e6d3;
+    --text: #5a4636; --muted: #a8927f; --heading: #e9832a;
+    --accent: #ff9f43; --accent-dark: #e9832a; --on-accent: #ffffff; --accent-soft: #ffe0c2;
+    --warn: #ff6b6b;
+    --glow1: #ffe9d6; --glow2: #e6f6ee;
+    --shadow: rgba(150, 110, 70, .12); --btn-shadow: #ecd9c6; --line: #e3cdb6;
+    --overlay: rgba(255, 246, 236, .88); --scrim: rgba(90, 70, 54, .35); --tip: #fff3e4; --halo: #ffffff;
+    --stone1: #d9cfc5; --stone2: #cfc4b9; --stone-fg: #8a7a6b;
+    --chain-line: rgba(90, 70, 54, .55); --badge: #8a7a6b; --hl: rgba(255, 159, 67, .14);
+  }
+  html[data-theme="black"] {
+    --bg: #14171e; --panel: #212632; --cell: #2a303d; --board: #1b1f28;
+    --text: #eef0f4; --muted: #8b93a6; --heading: #ffc15a;
+    --accent: #ffb547; --accent-dark: #d48f22; --on-accent: #1b1f28; --accent-soft: rgba(255, 181, 71, .25);
+    --warn: #ff6b6b;
+    --glow1: #1e2433; --glow2: #18202a;
+    --shadow: rgba(0, 0, 0, .35); --btn-shadow: #0d0f14; --line: #3a4253;
+    --overlay: rgba(20, 23, 30, .86); --scrim: rgba(0, 0, 0, .55); --tip: rgba(255, 181, 71, .1); --halo: #000000;
+    --stone1: #5c6373; --stone2: #525868; --stone-fg: #d4d8e0;
+    --chain-line: rgba(230, 234, 240, .75); --badge: #4a5163; --hl: rgba(255, 181, 71, .10);
+  }
+  html[data-theme="blue"] {
+    --bg: #eef7ff; --panel: #ffffff; --cell: #e2eefa; --board: #d8e9f8;
+    --text: #2f4a63; --muted: #8099b0; --heading: #2b86d6;
+    --accent: #3fa2f6; --accent-dark: #2b86d6; --on-accent: #ffffff; --accent-soft: #cfe6fb;
+    --warn: #ff6b6b;
+    --glow1: #dcefff; --glow2: #e8f8f6;
+    --shadow: rgba(50, 100, 150, .12); --btn-shadow: #cddff0; --line: #c4d9ee;
+    --overlay: rgba(238, 247, 255, .88); --scrim: rgba(47, 74, 99, .35); --tip: #e8f3fe; --halo: #ffffff;
+    --stone1: #cfd7df; --stone2: #c3ccd5; --stone-fg: #6f7f8f;
+    --chain-line: rgba(47, 74, 99, .55); --badge: #6f7f8f; --hl: rgba(63, 162, 246, .12);
+  }
+  html[data-theme="green"] {
+    --bg: #f1f8ee; --panel: #ffffff; --cell: #e3f0de; --board: #d9ecd2;
+    --text: #34503a; --muted: #86a08a; --heading: #3a9653;
+    --accent: #4cb86a; --accent-dark: #3a9653; --on-accent: #ffffff; --accent-soft: #d3eed9;
+    --warn: #ff6b6b;
+    --glow1: #e3f4dc; --glow2: #fbf6df;
+    --shadow: rgba(60, 110, 70, .12); --btn-shadow: #d2e6cc; --line: #c7dfc0;
+    --overlay: rgba(241, 248, 238, .88); --scrim: rgba(52, 80, 58, .35); --tip: #ebf6e6; --halo: #ffffff;
+    --stone1: #d5d6cc; --stone2: #c9cbbf; --stone-fg: #767a6b;
+    --chain-line: rgba(52, 80, 58, .55); --badge: #767a6b; --hl: rgba(76, 184, 106, .12);
+  }
+  html[data-theme="white"] {
+    --bg: #f7f7f5; --panel: #ffffff; --cell: #eeeeea; --board: #e6e5e0;
+    --text: #3a3a38; --muted: #9a9993; --heading: #3a3a38;
+    --accent: #4a4a48; --accent-dark: #2b2b2a; --on-accent: #ffffff; --accent-soft: #e2e1dc;
+    --warn: #f06b5b;
+    --glow1: #ffffff; --glow2: #f1f1ee;
+    --shadow: rgba(0, 0, 0, .08); --btn-shadow: #dcdbd6; --line: #d8d7d2;
+    --overlay: rgba(247, 247, 245, .9); --scrim: rgba(0, 0, 0, .3); --tip: #f2f2ef; --halo: #ffffff;
+    --stone1: #d4d3ce; --stone2: #c9c8c2; --stone-fg: #77766f;
+    --chain-line: rgba(58, 58, 56, .55); --badge: #77766f; --hl: rgba(0, 0, 0, .05);
+  }
+
+  body {
+    font-family: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+    background:
+      radial-gradient(circle at 15% 10%, var(--glow1) 0, transparent 40%),
+      radial-gradient(circle at 90% 85%, var(--glow2) 0, transparent 45%),
+      var(--bg);
+    transition: background-color .3s;
+  }
+  h1 { color: var(--heading); letter-spacing: .02em; }
+  .stat, .stage { border-radius: 16px; box-shadow: 0 3px 10px var(--shadow); }
+  .stat b { color: var(--text); }
+  .stat .beststage { margin-top: 1px; font-size: 10px; color: var(--muted); }
+  .stat .beststage:empty { display: none; }
+  /* ゲームオーバーの記録表示 */
+  .result { display: flex; gap: 10px; }
+  .result > div {
+    background: var(--panel); border-radius: 14px; padding: 10px 14px; min-width: 112px;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    box-shadow: 0 3px 10px var(--shadow);
+  }
+  .result small { font-size: 11px; color: var(--muted); }
+  .result b { font-size: 24px; color: var(--heading); font-variant-numeric: tabular-nums; }
+  .result .badge {
+    font-size: 11px; font-weight: 800; color: var(--on-accent); background: var(--accent);
+    border-radius: 999px; padding: 2px 8px; visibility: hidden;
+  }
+  .result .badge.on { visibility: visible; animation: pop .4s ease-out; }
+  #overlay .record { font-size: 12px; color: var(--muted); margin: 0; text-align: center; padding: 0 8px; }
+  #overlay { gap: 10px; }
+  /* SNSシェア */
+  .share { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; padding: 0 8px; }
+  .sharebtn {
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; padding: 7px 12px; border-radius: 999px;
+    text-decoration: none; cursor: pointer; border: none; color: #fff;
+    transition: transform .08s;
+  }
+  .sharebtn:active { transform: translateY(1px); }
+  .sharebtn.x { background: #111; box-shadow: 0 2px 0 #000; }
+  .sharebtn.line { background: #06c755; box-shadow: 0 2px 0 #049a42; }
+  .sharebtn.copy { background: var(--panel); color: var(--text); box-shadow: 0 2px 0 var(--btn-shadow); }
+  button {
+    border-radius: 999px; color: var(--on-accent);
+    box-shadow: 0 3px 0 var(--accent-dark);
+    transition: transform .08s, box-shadow .08s;
+  }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--accent-dark); }
+  .ghostbtn, .closebtn, .jump button, .dev .sub {
+    background: var(--panel); color: var(--text); box-shadow: 0 3px 0 var(--btn-shadow);
+  }
+  .ghostbtn:active, .closebtn:active, .jump button:active, .dev .sub:active { box-shadow: 0 1px 0 var(--btn-shadow); }
+
+  .board { background: var(--board); border-radius: 22px; padding: 10px; box-shadow: inset 0 2px 6px var(--shadow); }
+  .field { border-radius: 14px; }
+  .slot::after { background: var(--cell); border-radius: 12px; box-shadow: inset 0 2px 3px var(--shadow); }
+  .colhl { background: var(--hl); border-radius: 14px; }
+  .face {
+    border-radius: 12px;
+    box-shadow: inset 0 -4px 0 rgba(0, 0, 0, .1), 0 2px 4px var(--shadow);
+  }
+  #next .face { border-radius: 10px; }
+  .face.stone {
+    background: repeating-linear-gradient(135deg, var(--stone1) 0 7px, var(--stone2) 7px 14px) !important;
+    color: var(--stone-fg) !important;
+    box-shadow: inset 0 -4px 0 rgba(0, 0, 0, .1), inset 0 0 0 2px rgba(0, 0, 0, .08);
+  }
+  .face.ice::after {
+    border-radius: 12px;
+    background:
+      linear-gradient(135deg, rgba(255,255,255,.45) 0 16%, transparent 16% 40%, rgba(255,255,255,.28) 40% 45%, transparent 45%),
+      rgba(160, 215, 255, .38);
+    box-shadow: inset 0 0 0 3px rgba(255, 255, 255, .95), 0 0 10px rgba(130, 200, 255, .55);
+  }
+  .face.chain { outline: 3px dashed var(--chain-line); outline-offset: -5px; }
+  .face.chain::before { background: var(--badge); border-radius: 8px; }
+
+  .fx .ring { border-radius: 14px; border-color: var(--accent); }
+  .fx .mult, #chain { color: var(--heading); text-shadow: 0 0 6px var(--halo), 0 2px 0 var(--halo); }
+  #overlay { background: var(--overlay); }
+  #overlay h2 { color: var(--heading); }
+  #banner { background: var(--overlay); }
+  #banner .t { color: var(--heading); text-shadow: 0 3px 0 var(--accent-soft); }
+  .stage .num b { color: var(--heading); }
+  .stage .desc.link #stageDesc { text-decoration-color: var(--muted); }
+  .mark span { border-radius: 12px; }
+
+  #help { background: var(--scrim); }
+  .sheet { background: var(--bg); border: none; border-radius: 22px; box-shadow: 0 10px 30px var(--shadow); }
+  .card { background: var(--panel); border-radius: 16px; box-shadow: 0 2px 8px var(--shadow); }
+  .card dt, .card .tip b { color: var(--heading); }
+  .card .tip { background: var(--tip); border-radius: 12px; }
+  .sample.fallmark span { border-radius: 12px; }
+
+  .dev { border-color: var(--line); border-radius: 16px; }
+  .dev select { background: var(--panel); color: var(--text); border-color: var(--line); border-radius: 10px; }
+
+  /* テーマ選択 */
+  .themes { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .themes .sw {
+    width: 28px; height: 28px; padding: 0; border-radius: 50%;
+    border: 2px solid var(--line); box-shadow: 0 2px 0 var(--btn-shadow);
+    background: linear-gradient(135deg, var(--sw-bg) 0 50%, var(--sw-ac) 50% 100%);
+  }
+  .themes .sw.on { outline: 3px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Drop 2048</h1>
+    <div class="stat"><small>スコア</small><b id="score">0</b></div>
+    <div class="stat"><small>ベスト</small><b id="best">0</b><small class="beststage" id="bestStage"></small></div>
+  </header>
+  <div class="stage">
+    <div class="num">STAGE<b id="stageNum">1</b></div>
+    <div class="desc" id="descBox"><span id="stageDesc"></span><br><small>2048を消すと次のステージへ</small></div>
+    <div class="count" id="countBox">次のお邪魔まで<br>あと <b id="count">0</b> 手</div>
+  </div>
+  <div class="bar">
+    <span class="label">NEXT</span>
+    <div id="next"></div>
+    <span class="spacer"></span>
+    <button class="ghostbtn" id="helpBtn">遊び方</button>
+    <button id="newGame">最初から</button>
+  </div>
+  <div class="board">
+    <div class="warnzone" id="warnzone"></div>
+    <div class="zone" id="zone"></div>
+    <div class="field" id="field">
+      <div class="colhl" id="colhl"></div>
+      <div id="chain"></div>
+      <div id="banner"><div class="t" id="bannerT"></div><div class="d" id="bannerD"></div></div>
+      <div id="overlay">
+        <h2>ゲームオーバー</h2>
+        <div class="result">
+          <div><small>到達ステージ</small><b id="finalStage"></b><span class="badge" id="newStage">最高記録！</span></div>
+          <div><small>スコア</small><b id="finalScore"></b><span class="badge" id="newBest">ベスト更新！</span></div>
+        </div>
+        <p class="record" id="recordLine"></p>
+        <div class="share">
+          <a class="sharebtn x" id="shareX" target="_blank" rel="noopener">Xでシェア</a>
+          <a class="sharebtn line" id="shareLine" target="_blank" rel="noopener">LINEで送る</a>
+          <button class="sharebtn copy" id="shareCopy" type="button">コピー</button>
+        </div>
+        <button id="retry">もう一度</button>
+      </div>
+    </div>
+  </div>
+  <p class="hint">クリック / タップで落とす列を選択<br>キーボード：← → で移動、↓ かスペースで落とす</p>
+  <div class="themes" id="themes">
+    <span>テーマ</span>
+    <button class="sw" data-theme="black"  title="黒"       style="--sw-bg:#14171e;--sw-ac:#ffb547"></button>
+    <button class="sw" data-theme="blue"   title="水色"     style="--sw-bg:#eef7ff;--sw-ac:#3fa2f6"></button>
+    <button class="sw" data-theme="green"  title="緑"       style="--sw-bg:#f1f8ee;--sw-ac:#4cb86a"></button>
+    <button class="sw" data-theme="orange" title="オレンジ" style="--sw-bg:#fff6ec;--sw-ac:#ff9f43"></button>
+    <button class="sw" data-theme="white"  title="白"       style="--sw-bg:#ffffff;--sw-ac:#4a4a48"></button>
+  </div>
+  <!-- お邪魔の説明ページ -->
+  <div id="help">
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>遊び方</h2>
+        <button class="closebtn" id="helpClose" aria-label="閉じる">✕</button>
+      </div>
+      <section class="card" id="help-basic">
+        <ul class="rules">
+          <li>列をタップして数字を落とします。<b>同じ数字が上下左右にくっつくと合体</b>して2倍になります。</li>
+          <li><b>横にくっついたときは、後から置いた数字の列に移ります。</b>連鎖を狙うときのポイントです。</li>
+          <li>3つ以上まとめてくっつくと、一気に <b>×4・×8</b> になります。</li>
+          <li>合体して空いたマスには上の数字が落ちてきて、そこでまた合体（連鎖）することもあります。</li>
+          <li><b>2048になると消えて、次のステージへ</b>進みます。盤面はそのまま引き継ぎます。</li>
+          <li>どの列にも置けなくなるとゲームオーバーです。</li>
+        </ul>
+      </section>
+
+      <h3 class="sec">お邪魔</h3>
+      <p class="lead">ステージ2からは、組ごとに4種類のお邪魔が1つずつ、ランダムな順番で出てきます。どのお邪魔も、合体をうまく使えば片付けられます。片付けずに次のステージへ進むと、そのまま盤面に残ります。</p>
+      <div class="jump">
+        <button data-jump="stone">石</button>
+        <button data-jump="ice">氷</button>
+        <button data-jump="fall">落下</button>
+        <button data-jump="chain">鎖</button>
+      </div>
+
+      <section class="card" id="help-stone">
+        <div class="card-head">
+          <div class="sample" data-sample="stone"></div>
+          <div><h3>石</h3><p>次に落とす1個が石になる</p></div>
+        </div>
+        <dl>
+          <dt>どうなる？</dt>
+          <dd>どの数字とも合体しない、ただのじゃまなブロックです。置く列は自分で選べます。</dd>
+          <dt>片付け方</dt>
+          <dd>石の上下左右で合体が起きると、●が1つ減ります。●がなくなると壊れて、上に乗っていた数字が落ちてきます。</dd>
+        </dl>
+        <div class="tip"><b>コツ：</b>合体が起きやすい場所の隣に置くと早く壊せます。すぐ壊せないときは、端の列に寄せておくと邪魔になりにくいです。</div>
+      </section>
+
+      <section class="card" id="help-ice">
+        <div class="card-head">
+          <div class="sample" data-sample="ice"></div>
+          <div><h3>氷</h3><p>盤面の数字1つが凍る</p></div>
+        </div>
+        <dl>
+          <dt>どうなる？</dt>
+          <dd>盤面の数字がランダムに1つ凍ります。凍った数字は、隣に同じ数字が来ても合体しません。</dd>
+          <dt>片付け方</dt>
+          <dd>凍った数字の上下左右で合体が1回起きると溶けます。溶けた瞬間に、隣に同じ数字があればそのまま合体します。</dd>
+        </dl>
+        <div class="tip"><b>コツ：</b>凍った数字の隣に同じ数字を置いておけば、溶けたときにすぐ合体して連鎖につなげられます。</div>
+      </section>
+
+      <section class="card" id="help-fall">
+        <div class="card-head">
+          <div class="sample fallmark"><span>▼ 4</span></div>
+          <div><h3>落下</h3><p>上から数字が降ってくる</p></div>
+        </div>
+        <dl>
+          <dt>どうなる？</dt>
+          <dd>数手ごとに、上から2〜3個の数字が降ってきます。降る直前の1手だけ、降る列の上に赤い「▼」が出て、その列が赤く光ります。</dd>
+          <dt>片付け方</dt>
+          <dd>降ってきた数字も普通の数字と同じなので、合体させれば消せます。ただし、満杯の列に降ってくるとゲームオーバーです。</dd>
+        </dl>
+        <div class="tip"><b>コツ：</b>予告が出たら、降ってくる数字と合体できる数字を、その列の一番上に置いておきましょう。満杯に近い列は空けておくと安全です。</div>
+      </section>
+
+      <section class="card" id="help-chain">
+        <div class="card-head">
+          <div class="sample" data-sample="chain"></div>
+          <div><h3>鎖</h3><p>次に落とす数字に鎖がつく</p></div>
+        </div>
+        <dl>
+          <dt>どうなる？</dt>
+          <dd>鎖つきの数字は、その場から動きません。</dd>
+          <dd><ul>
+            <li>横に合体しても、結果は鎖のマスに残る</li>
+            <li>下の数字が消えても落ちず、宙に浮いたまま</li>
+            <li>浮いた鎖の下の空きマスには、数字を置けない</li>
+          </ul></dd>
+          <dt>片付け方</dt>
+          <dd>鎖の数字自体が合体するたびに「⛓」の数字が1つ減り、0で外れます。宙に浮いていたら、外れた瞬間に落ちて、また合体するチャンスになります。</dd>
+        </dl>
+        <div class="tip"><b>コツ：</b>下の段に置くと宙に浮きにくくなります。鎖の数字と同じ数字を、すぐ近くで作れる場所に置くのがおすすめです。</div>
+      </section>
+    </div>
+  </div>
+
+  <div class="dev" id="dev">
+    <span class="tag">開発用 ステージ</span>
+    <button class="sub" id="devPrev">◀</button>
+    <select id="devStage"></select>
+    <button class="sub" id="devNext">▶</button>
+    <button id="devGo">開始</button>
+  </div>
+</div>
+
+<script>
+// ====== 調整用の数値 ======
+const COLS = 5;            // 横のマス数
+const ROWS = 6;            // 縦のマス数
+const SPAWN_MIN_TOP = 3;   // 落ちてくる数字の上限（2^3 = 8 までは最初から出る）
+const SPAWN_GAP = 3;       // 盤面の最大値より 2^この数 だけ小さい数字まで出るようになる
+const RARE_CHANCE = 0.02;  // まれに上限より大きい数字が落ちてくる確率（2%）
+const RARE_STEPS = 2;      // そのとき上限から何段階まで大きくなるか（8なら16か32）
+const VANISH_AT = 2048;    // この数字に達したら消滅し、次のステージへ
+const BIG_WAIT = 420;      // 3つ以上の合体・連鎖のときの「溜め」(ミリ秒)
+const SMALL_WAIT = 200;    // 2つ合体のときの待ち時間(ミリ秒)
+const DEV_MODE = false;     // 開発用パネル（ステージ変更）を表示するか。公開時は false に
+
+// ====== ステージ表 ======
+// type（お邪魔の種類）
+//   "none"  = お邪魔なし
+//   "stone" = 石：次に落とす1個が石になる。隣で合体が hp 回起きると壊れる
+//   "ice"   = 氷：盤面の数字1つが凍って合体できなくなる。隣で1回合体が起きると溶ける
+//   "fall"  = 落下：上から count 個の数字が降ってくる。直前の1手だけ降る列を予告
+//   "chain" = 鎖：次に落とす数字に鎖がつく。その場から動かず、下が空いても落ちない。
+//             鎖の数字自身が count 回合体すると外れる
+//   （"rise" = 下から1列せり上がり。今は未使用）
+// every: ステージ開始時に1回、その後この手数ごとに発生
+//
+// ステージは「組」ごとに進む。組の中のお邪魔は、ゲームごとにランダムな順番で出てくる
+// （例：ステージ2の組 → 2-1〜2-4 が、石・氷・落下・鎖のどれかの順になる）
+// 最後の組より先は、最後の組の内容が順番を変えてくり返される（5-1, 5-2 …）
+const STAGE_GROUPS = [
+  [ // ステージ1
+    { type: "none" },
+  ],
+  [ // ステージ2-1〜2-4
+    { type: "stone", hp: 1,    every: 10 },
+    { type: "ice",             every: 15 },
+    { type: "fall",  count: 2, every: 25 },
+    { type: "chain", count: 2, every: 15 },
+  ],
+  [ // ステージ3-1〜3-4
+    { type: "stone", hp: 1,    every: 8  },
+    { type: "ice",             every: 12 },
+    { type: "fall",  count: 2, every: 22 },
+    { type: "chain", count: 2, every: 12 },
+  ],
+  [ // ステージ4-1〜4-4
+    { type: "stone", hp: 2,    every: 10 },
+    { type: "ice",             every: 10 },
+    { type: "fall",  count: 3, every: 22 },
+    { type: "chain", count: 2, every: 10 },
+  ],
+];
+
+// ====== ルール部分（画面表示とは独立） ======
+// LOGIC START
+function findPos(grid, id) {
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (grid[r][c] && grid[r][c].id === id) return [r, c];
+  return null;
+}
+
+// 上下左右で同じ数字が接しているマス
+function sameNeighbors(grid, r, c) {
+  if (grid[r][c].stone || grid[r][c].ice) return [];   // 石・凍った数字は合体しない
+  const v = grid[r][c].v;
+  const out = [];
+  for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+    const nr = r + dr, nc = c + dc;
+    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && grid[nr][nc] && !grid[nr][nc].stone && !grid[nr][nc].ice && grid[nr][nc].v === v)
+      out.push([nr, nc]);
+  }
+  return out;
+}
+
+// (r,c) のタイルを中心に合体させる
+// ・接している数だけ ×2 （2つで×2、3つで×4、4つで×8）→ 常に2の累乗のまま
+// ・合体後の数字は (r,c) の列に残る。下と合体したら下のマスに残る
+// ・鎖つきの数字が絡むときは、鎖のマスに残る（鎖は合体1回ごとに1つ減り、0で外れる）
+function mergeAt(grid, r, c) {
+  const nb = sameNeighbors(grid, r, c);
+  if (!nb.length) return null;
+  const center = grid[r][c];
+  const value = center.v * Math.pow(2, nb.length);
+  const cells = [[r, c], ...nb];
+  const chained = cells.find(([cr, cc]) => grid[cr][cc].chain > 0);
+  let keepPos, to;
+  if (chained) {
+    keepPos = chained; to = chained;
+  } else {
+    const withBelow = nb.some(([nr, nc]) => nr === r + 1 && nc === c);
+    keepPos = [r, c]; to = [withBelow ? r + 1 : r, c];
+  }
+  const tile = grid[keepPos[0]][keepPos[1]];
+  const consumed = [];
+  cells.forEach(([cr, cc]) => {
+    const t = grid[cr][cc];
+    grid[cr][cc] = null;
+    if (t !== tile) consumed.push(t);
+  });
+  tile.v = value;
+  const hadChain = tile.chain > 0;
+  if (hadChain) tile.chain--;
+  if (!tile.chain) delete tile.chain;
+  const unchained = hadChain && !tile.chain;
+  grid[to[0]][to[1]] = tile;
+  return { tile, consumed, to, gained: value, involved: cells, hadChain, unchained };
+}
+
+// 合体に関わったマスの上下左右にある石にダメージ（1回の合体で1つの石は1ダメージ）
+// 隣で合体が起きたとき：石は1ダメージ、氷は溶ける
+function damageStones(grid, positions) {
+  const hit = [], broken = [], melted = [];
+  const seen = new Set();
+  for (const [r, c] of positions)
+    for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+      const t = grid[nr][nc];
+      if (!t || seen.has(t.id)) continue;
+      if (t.ice) { seen.add(t.id); t.ice = false; melted.push(t); continue; }
+      if (!t.stone) continue;
+      seen.add(t.id);
+      t.hp--;
+      if (t.hp <= 0) { grid[nr][nc] = null; broken.push(t); }
+      else hit.push(t);
+    }
+  return { hit, broken, melted };
+}
+
+// 氷を張れる数字（石・すでに凍った数字以外）
+function iceTargets(grid) {
+  const out = [];
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      const t = grid[r][c];
+      if (t && !t.stone && !t.ice) out.push(t);
+    }
+  return out;
+}
+
+// 空いたマスに上の数字を落とす。動いたタイルのidを返す
+// 鎖つきの数字はその場に止まり（宙に浮いたまま）、上の数字はその上に乗る
+function gravity(grid) {
+  const moved = [];
+  for (let c = 0; c < COLS; c++) {
+    let write = ROWS - 1;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      if (grid[r][c] && grid[r][c].chain > 0) { write = r - 1; continue; }
+      if (grid[r][c]) {
+        if (r !== write) {
+          grid[write][c] = grid[r][c];
+          grid[r][c] = null;
+          moved.push(grid[write][c].id);
+        }
+        write--;
+      }
+    }
+  }
+  return moved;
+}
+
+// その列で落ちて止まる行（満杯なら -1）。上から見て最初の数字の1つ上
+// （鎖の数字の下に空きがあっても、そこには入れない）
+function landingRow(grid, c) {
+  for (let r = 0; r < ROWS; r++) if (grid[r][c]) return r - 1;
+  return ROWS - 1;
+}
+
+// 全体を1段上げて、一番下に新しい列を入れる。一番上からあふれたら true
+function rise(grid, newRow) {
+  const overflow = grid[0].some(Boolean);
+  for (let r = 0; r < ROWS - 1; r++) grid[r] = grid[r + 1];
+  grid[ROWS - 1] = newRow.slice();
+  return overflow;
+}
+
+// 合体を連鎖が止まるまで繰り返す（画面なしの版。テスト用）
+function resolveAll(grid, startIds) {
+  let active = startIds.slice(), chain = 0, gained = 0;
+  while (active.length) {
+    const id = active.shift();
+    const p = findPos(grid, id);
+    if (!p) continue;
+    const m = mergeAt(grid, p[0], p[1]);
+    if (!m) continue;
+    chain++; gained += m.gained;
+    const ids = m.consumed.map(t => t.id);
+    active = active.filter(a => !ids.includes(a));
+    const vanished = VANISH_AT > 0 && m.tile.v >= VANISH_AT;
+    if (vanished) grid[m.to[0]][m.to[1]] = null;   // 目標に達した数字は消える
+    const dmg = damageStones(grid, m.involved);
+    const moved = gravity(grid);
+    if (!vanished) active.unshift(m.tile.id);
+    moved.forEach(x => { if (!active.includes(x)) active.push(x); });
+    dmg.melted.forEach(t => { if (!active.includes(t.id)) active.push(t.id); });   // 溶けた数字も合体チェック
+  }
+  return { chain, gained };
+}
+// LOGIC END
+
+
+// ====== 画面・操作 ======
+const $ = id => document.getElementById(id);
+const field = $("field"), zone = $("zone"), colhl = $("colhl"), nextEl = $("next");
+const chainEl = $("chain"), overlay = $("overlay"), banner = $("banner");
+
+let grid, score, best = 0, current, next, cursor = 2, busy = false, over = false, nextId = 1;
+let stage, stageTurns, pendingUps, stoneQueued;
+const tileEls = new Map();
+let ghost, audio;
+
+try { best = Number(localStorage.getItem("bestDrop2048")) || 0; } catch (e) {}
+// 最高到達ステージ（何番目のステージか と 表示名）
+let bestStage = { index: 0, label: "" };
+try { bestStage = JSON.parse(localStorage.getItem("bestStageDrop2048")) || bestStage; } catch (e) {}
+let bestAtStart = 0, bestStageAtStart = 0;
+function recordStage() {
+  if (!devRun && stage > bestStage.index) {
+    bestStage = { index: stage, label: stageLabel(stage) };
+    try { localStorage.setItem("bestStageDrop2048", JSON.stringify(bestStage)); } catch (e) {}
+  }
+  $("bestStage").textContent = bestStage.label ? "最高 " + bestStage.label : "";
+}
+
+field.style.setProperty("--rows", ROWS);
+field.style.setProperty("--cols", COLS);
+for (let r = 0; r < ROWS; r++)
+  for (let c = 0; c < COLS; c++) {
+    const s = document.createElement("div");
+    s.className = "slot";
+    place(s, r, c);
+    field.insertBefore(s, colhl);
+  }
+
+const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+// --- 音 ---
+function beep(freq, vol = 0.07, len = 0.14, type = "square") {
+  try {
+    audio = audio || new AudioContext();
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(vol, audio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + len);
+    osc.connect(gain).connect(audio.destination);
+    osc.start();
+    osc.stop(audio.currentTime + len);
+  } catch (e) {}
+}
+function mergeSound(chain, big) {
+  const f = 330 * Math.pow(2, ((chain - 1) * 2) / 12);
+  beep(f);
+  if (big) setTimeout(() => beep(f * 1.5, 0.05, 0.2), 70);
+}
+const dropSound = () => beep(140, 0.04, 0.08, "triangle");
+const riseSound = () => beep(90, 0.06, 0.25, "sawtooth");
+
+// --- 見た目 ---
+// テーマごとの数字タイルの色（2, 4, 8 … 2048 の順）。[背景, 文字]
+const DARK = "#5a4636", WHITE = "#ffffff";
+const TILE_THEMES = {
+  orange: [ // パステル：ミント → 水色 → ラベンダー → ピンク → ピーチ → 暖色
+    ["#cdeee0", DARK], ["#c6e3f7", DARK], ["#d5d0f6", DARK], ["#f4cde8", DARK], ["#ffd2c2", DARK], ["#ffe3a6", DARK],
+    ["#ffd06f", DARK], ["#ffb47c", DARK], ["#ff9d8c", DARK], ["#f591b8", WHITE], ["#b98ef0", WHITE],
+  ],
+  black: [ // 宝石っぽい深めの色
+    ["#2f6f8f", WHITE], ["#2f5fa8", WHITE], ["#4a4fb0", WHITE], ["#7246a8", WHITE], ["#9b3f93", WHITE], ["#b8436a", WHITE],
+    ["#c2533f", WHITE], ["#c7762f", WHITE], ["#c99a2e", WHITE], ["#8fae36", WHITE], ["#3fae7a", WHITE],
+  ],
+  blue: [ // 水色 → 青 → むらさき
+    ["#d7eefc", "#2f4a63"], ["#c0e2fa", "#2f4a63"], ["#a6d3f6", "#2f4a63"], ["#8cc4f1", "#2f4a63"], ["#6db0ea", WHITE], ["#4f9ce3", WHITE],
+    ["#3a86d7", WHITE], ["#4f6fd2", WHITE], ["#6c5ccc", WHITE], ["#8f50c4", WHITE], ["#b546a6", WHITE],
+  ],
+  green: [ // 若葉 → 緑 → 黄色 → オレンジ
+    ["#e0f3d9", "#34503a"], ["#cbeac0", "#34503a"], ["#b2e0a5", "#34503a"], ["#94d388", "#34503a"], ["#72c06a", WHITE], ["#52ab5a", WHITE],
+    ["#3d9350", WHITE], ["#a9c43a", "#34503a"], ["#e3c23f", "#34503a"], ["#eca13d", WHITE], ["#e8733f", WHITE],
+  ],
+  white: [ // 定番の2048っぽい落ち着いた色
+    ["#eee4da", "#5e5a53"], ["#ede0c8", "#5e5a53"], ["#f2b179", WHITE], ["#f59563", WHITE], ["#f67c5f", WHITE], ["#f65e3b", WHITE],
+    ["#edcf72", WHITE], ["#edcc61", WHITE], ["#edc850", WHITE], ["#edc53f", WHITE], ["#edc22e", WHITE],
+  ],
+};
+let theme = "orange";
+function colorOf(v) {
+  const list = TILE_THEMES[theme];
+  const [bg, fg] = list[(Math.log2(v) - 1) % list.length];
+  return { bg, fg };
+}
+function fontFor(v) {
+  const d = String(v).length;
+  return d <= 2 ? "clamp(15px, 5.5vw, 24px)"
+       : d === 3 ? "clamp(13px, 4.6vw, 20px)"
+       : d === 4 ? "clamp(11px, 3.8vw, 16px)"
+       : "clamp(9px, 3vw, 13px)";
+}
+// p は数字か、タイル（{v, stone, hp}）
+function paint(el, p) {
+  const face = el.firstChild;
+  if (typeof p === "object" && p.stone) {
+    face.classList.add("stone");
+    face.textContent = "●".repeat(Math.max(p.hp, 0));   // 残り耐久
+    return;
+  }
+  const v = typeof p === "object" ? p.v : p;
+  face.classList.remove("stone");
+  face.classList.toggle("ice", typeof p === "object" && !!p.ice);
+  const ch = typeof p === "object" && p.chain > 0 ? p.chain : 0;
+  face.classList.toggle("chain", ch > 0);
+  face.dataset.chain = ch || "";
+  const { bg, fg } = colorOf(v);
+  face.textContent = v;
+  face.style.background = bg;
+  face.style.color = fg;
+  face.style.fontSize = fontFor(v);
+}
+function makeTile(p) {
+  const el = document.createElement("div");
+  el.className = "tile";
+  el.appendChild(document.createElement("div")).className = "face";
+  paint(el, p);
+  return el;
+}
+function place(el, r, c) {
+  el.style.top = (r * 100 / ROWS) + "%";
+  el.style.left = (c * 100 / COLS) + "%";
+}
+function addTileEl(t, r, c) {
+  const el = makeTile(t);
+  place(el, r, c);
+  field.appendChild(el);
+  tileEls.set(t.id, el);
+  return el;
+}
+function sync() {
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      const t = grid[r][c];
+      if (!t) continue;
+      const el = tileEls.get(t.id);
+      place(el, r, c);
+      paint(el, t);
+    }
+  $("score").textContent = score.toLocaleString();
+  if (!devRun && score > best) {
+    best = score;
+    try { localStorage.setItem("bestDrop2048", best); } catch (e) {}
+  }
+  $("best").textContent = best.toLocaleString();
+}
+function restart(el, cls) {
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+}
+function showChain(n) {
+  if (n < 2) return;
+  chainEl.textContent = n + "連鎖！";
+  restart(chainEl, "show");
+}
+function burst(r, c, mult, label) {
+  const fx = document.createElement("div");
+  fx.className = "fx";
+  place(fx, r, c);
+  const text = label || (mult > 2 ? "×" + mult : "");
+  fx.innerHTML = '<div class="ring"></div>' + (text ? `<div class="mult">${text}</div>` : "");
+  field.appendChild(fx);
+  setTimeout(() => fx.remove(), 800);
+}
+
+// --- ステージ ---
+// ゲームごとの並び（plan）を、必要になった分だけ組単位で作る
+// stage は「何番目のステージか」（1, 2, 3 …）。表示は stageLabel で「2-3」のようにする
+let plan = [];
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+function addGroup(first) {
+  const g = new Set(plan.map(x => x.group)).size;           // これから作る組の番号（0始まり）
+  const src = STAGE_GROUPS[Math.min(g, STAGE_GROUPS.length - 1)];
+  let order = shuffle(src);
+  if (first) order = [first, ...order.filter(d => d !== first)]; // 開発用：指定のお邪魔を先頭に
+  order.forEach((def, i) => plan.push({
+    def, group: g,
+    label: order.length === 1 ? `${g + 1}` : `${g + 1}-${i + 1}`,
+  }));
+}
+function ensurePlan(n) { while (plan.length < n) addGroup(); }
+const stageDef = n => { ensurePlan(n); return plan[n - 1].def; };
+const stageLabel = n => { ensurePlan(n); return plan[n - 1].label; };
+function describe(def) {
+  if (def.type === "none") return "お邪魔なし";
+  // 何手ごとかは、右の「次のお邪魔まで あと◯手」で見せるので書かない
+  return def.type === "stone" ? `石ブロック（耐久${def.hp}）が出現`
+       : def.type === "ice" ? "盤面の数字1つが凍る"
+       : def.type === "chain" ? `鎖つきの数字ブロックが出現（${def.count}回合体で外れる）`
+       : def.type === "fall" ? `数字ブロックが${def.count}個降ってくる`
+       : "下から1列せり上がり";
+}
+function untilNext() {
+  const e = stageDef(stage).every;
+  if (!e) return Infinity;
+  return e - (stageTurns % e);
+}
+function updateStage() {
+  $("stageNum").textContent = stageLabel(stage);
+  $("stageDesc").textContent = describe(stageDef(stage));
+  $("descBox").classList.toggle("link", stageDef(stage).type !== "none");
+  const n = untilNext();
+  $("countBox").style.visibility = n === Infinity ? "hidden" : "";
+  $("count").textContent = n;
+  $("countBox").classList.toggle("warn", n <= 1);
+  // 落下お邪魔は、次の1手で降ってくるときだけ予告を出す
+  const imminent = n <= 1 && fallPlan.length > 0;
+  $("warnzone").classList.toggle("show", imminent);
+  field.querySelectorAll(".dangercol").forEach(d => d.classList.toggle("show", imminent));
+}
+async function showBanner() {
+  $("bannerT").textContent = "STAGE " + stageLabel(stage);
+  $("bannerD").textContent = describe(stageDef(stage));
+  restart(banner, "show");
+  [0, 7, 12].forEach((st, n) => setTimeout(() => beep(392 * Math.pow(2, st / 12), 0.06, 0.25), n * 120));
+  await sleep(1300);
+}
+// お邪魔を1回発動。せり上がりで一番上からあふれたら true
+async function triggerObstacle() {
+  const def = stageDef(stage);
+  if (def.type === "none") return false;
+  if (def.type === "ice") { iceDebt++; await applyIce(); return false; }
+  if (def.type === "chain") {
+    stoneQueued = { v: randomValue(false), chain: def.count };   // 次に落とす数字が鎖つきになる
+    return false;
+  }
+  if (def.type === "stone") {
+    stoneQueued = { v: 0, stone: true, hp: def.hp };   // 次に落とす1個が石になる
+    return false;
+  }
+  if (def.type === "fall") return await doFall(def.count);
+  return await doRise();
+}
+
+// --- 氷 ---
+// 凍らせる数字が盤面にないときは、数字が置かれるまで持ち越す
+let iceDebt = 0;
+async function applyIce() {
+  while (iceDebt > 0) {
+    const targets = iceTargets(grid);
+    if (!targets.length) return;
+    const t = targets[Math.floor(Math.random() * targets.length)];
+    t.ice = true;
+    iceDebt--;
+    const el = tileEls.get(t.id);
+    paint(el, t);
+    restart(el, "freeze");
+    beep(1400, 0.04, 0.12, "sine");
+    setTimeout(() => beep(1800, 0.03, 0.15, "sine"), 70);
+    await sleep(300);
+  }
+}
+
+// --- 上から降ってくるお邪魔 ---
+let fallPlan = [];
+function clearFallPlan() {
+  fallPlan = [];
+  $("warnzone").innerHTML = "";
+  $("warnzone").classList.remove("show");
+  field.querySelectorAll(".dangercol").forEach(d => d.remove());
+}
+// 次に降ってくる列と数字を決めておく（表示は直前の1手だけ。updateStage で切り替え）
+function planFall(count) {
+  clearFallPlan();
+  const cols = [...Array(COLS).keys()].sort(() => Math.random() - 0.5).slice(0, Math.min(count, COLS));
+  cols.sort((a, b) => a - b).forEach(c => {
+    const v = randomValue(false);
+    fallPlan.push({ c, v });
+    const m = document.createElement("div");
+    m.className = "mark";
+    m.style.left = (c * 100 / COLS) + "%";
+    m.innerHTML = `<span>▼ ${v}</span>`;
+    $("warnzone").appendChild(m);
+    const d = document.createElement("div");
+    d.className = "dangercol";
+    d.style.left = (c * 100 / COLS) + "%";
+    field.appendChild(d);
+  });
+}
+// 予告どおりに降らせて、次の予告を出す。満杯の列に降ってきたら true（ゲームオーバー）
+async function doFall(count) {
+  if (!fallPlan.length) planFall(count);
+  const ids = [];
+  let overflow = false;
+  for (const { c, v } of fallPlan) {
+    const r = landingRow(grid, c);
+    if (r < 0) { overflow = true; continue; }
+    const t = { id: nextId++, v };
+    addTileEl(t, -1, c);
+    grid[r][c] = t;
+    ids.push(t.id);
+  }
+  void field.offsetWidth;
+  sync();
+  beep(120, 0.06, 0.18, "triangle");
+  await sleep(220);
+  planFall(count);
+  if (overflow) return true;
+  await resolveAnimated(ids);
+  return false;
+}
+
+// --- 次の数字 ---
+function spawnTop() {
+  let maxV = 2;
+  grid.flat().forEach(t => { if (t && !t.stone && t.v > maxV) maxV = t.v; });
+  return Math.max(SPAWN_MIN_TOP, Math.floor(Math.log2(maxV)) - SPAWN_GAP);
+}
+function randomValue(allowRare = true) {
+  const top = spawnTop();
+  if (allowRare && Math.random() < RARE_CHANCE) {
+    return Math.pow(2, top + 1 + Math.floor(Math.random() * RARE_STEPS));
+  }
+  const weights = [];
+  for (let e = 1; e <= top; e++) weights.push(top - e + 1);
+  let roll = Math.random() * weights.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < weights.length; i++) {
+    roll -= weights[i];
+    if (roll < 0) return Math.pow(2, i + 1);
+  }
+  return 2;
+}
+// せり上がる列（横に同じ数字が並ばないようにする）
+function makeRiseRow() {
+  const row = [];
+  for (let c = 0; c < COLS; c++) {
+    let v;
+    do { v = randomValue(false); } while (c > 0 && row[c - 1].v === v);
+    row.push({ id: nextId++, v });
+  }
+  return row;
+}
+// 手元の1個を進める。石が予約されていれば、石を先に割り込ませる
+function advanceQueue() {
+  if (stoneQueued) { current = stoneQueued; stoneQueued = null; }
+  else { current = next; next = { v: randomValue() }; }
+}
+function updateQueue() {
+  paint(ghost, current);
+  ghost.style.left = (cursor * 100 / COLS) + "%";
+  nextEl.innerHTML = "";
+  const n = makeTile(next);
+  n.style.cssText = "position:absolute;inset:0;width:100%;height:100%;padding:0";
+  nextEl.appendChild(n);
+}
+function setCursor(c) {
+  cursor = Math.max(0, Math.min(COLS - 1, c));
+  colhl.style.left = (cursor * 100 / COLS) + "%";
+  if (ghost) ghost.style.left = (cursor * 100 / COLS) + "%";
+}
+
+// --- ゲーム進行 ---
+// dev: 開発用パネルからの指定 { group: 組の番号(0始まり), def: 先頭にするお邪魔 }
+let devRun = false;   // 開発用パネルから始めたゲームは記録に残さない
+async function newGame(dev) {
+  plan = [];
+  devRun = !!dev;
+  bestAtStart = best;
+  bestStageAtStart = bestStage.index;
+  let startStage = 1;
+  if (dev) {
+    while (new Set(plan.map(x => x.group)).size < dev.group) addGroup();
+    startStage = plan.length + 1;
+    addGroup(dev.def);
+  }
+  tileEls.forEach(el => el.remove());
+  tileEls.clear();
+  grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+  score = 0; over = false; busy = true;
+  stage = startStage; stageTurns = 0; pendingUps = 0; stoneQueued = null;
+  $("bestStage").textContent = bestStage.label ? "最高 " + bestStage.label : "";
+  iceDebt = 0;
+  clearFallPlan();
+  overlay.classList.remove("show");
+  current = { v: randomValue() };
+  next = { v: randomValue() };
+  if (!ghost) {
+    ghost = makeTile(2);
+    ghost.classList.add("ghost");
+    ghost.style.top = "0";
+    zone.appendChild(ghost);
+  }
+  setCursor(cursor);
+  updateStage();
+  sync();
+  ghost.style.opacity = "0";
+  await showBanner();
+  await triggerObstacle();                 // ステージ開始時のお邪魔
+  advanceQueue();
+  ghost.style.opacity = "";
+  updateQueue();
+  busy = false;
+}
+
+// 合体を1段ずつ見せながら、連鎖が止まるまで処理する（resolveAll と同じ手順）
+async function resolveAnimated(startIds) {
+  let active = startIds.slice(), chain = 0;
+  while (active.length) {
+    const id = active.shift();
+    const p = findPos(grid, id);
+    if (!p) continue;
+    const m = mergeAt(grid, p[0], p[1]);
+    if (!m) continue;
+    chain++;
+    score += m.gained;
+    const mult = Math.pow(2, m.consumed.length);
+    const big = m.consumed.length >= 2 || chain >= 2;
+
+    const ids = m.consumed.map(x => x.id);
+    active = active.filter(a => !ids.includes(a));
+    m.consumed.forEach(x => {
+      const e = tileEls.get(x.id);
+      place(e, m.to[0], m.to[1]);
+      e.classList.add("vanish");
+      tileEls.delete(x.id);
+      setTimeout(() => e.remove(), 200);
+    });
+    sync();
+
+    const el = tileEls.get(m.tile.id);
+    if (big) {
+      restart(el, "bigpop");
+      burst(m.to[0], m.to[1], mult);
+      if (chain >= 3 || mult >= 8) restart(field, "shake");
+    } else {
+      restart(el, "pop");
+    }
+    mergeSound(chain, big);
+    showChain(chain);
+    if (m.hadChain) {
+      // 鎖が1つ減る／外れる演出
+      beep(m.unchained ? 700 : 500, 0.05, 0.12, "triangle");
+      if (m.unchained) {
+        restart(el, "unchain");
+        setTimeout(() => beep(1000, 0.04, 0.15, "triangle"), 80);
+      }
+    }
+    await sleep(big ? BIG_WAIT : SMALL_WAIT);
+
+    // 目標の数字に達したら消滅 → ステージアップ予約
+    const vanished = VANISH_AT > 0 && m.tile.v >= VANISH_AT;
+    if (vanished) {
+      grid[m.to[0]][m.to[1]] = null;
+      tileEls.delete(m.tile.id);
+      el.classList.remove("pop", "bigpop");
+      el.classList.add("clear");
+      setTimeout(() => el.remove(), 600);
+      burst(m.to[0], m.to[1], 0, m.tile.v + "!");
+      restart(field, "shake");
+      [0, 4, 7, 12, 16].forEach((st, n) => setTimeout(() => beep(523 * Math.pow(2, st / 12), 0.06, 0.22), n * 80));
+      pendingUps++;
+      await sleep(450);
+    }
+
+    // 隣で合体が起きた石にダメージ
+    const dmg = damageStones(grid, m.involved);
+    dmg.hit.forEach(st => { const e = tileEls.get(st.id); paint(e, st); restart(e, "hit"); });
+    dmg.broken.forEach(st => {
+      const e = tileEls.get(st.id);
+      tileEls.delete(st.id);
+      e.classList.add("clear");
+      setTimeout(() => e.remove(), 600);
+    });
+    dmg.melted.forEach(t => { const e = tileEls.get(t.id); paint(e, t); restart(e, "melt"); });
+    if (dmg.melted.length) beep(900, 0.05, 0.15, "sine");
+    if (dmg.hit.length) beep(200, 0.05, 0.08, "triangle");
+    if (dmg.broken.length) {
+      beep(90, 0.08, 0.3, "sawtooth");
+      setTimeout(() => beep(60, 0.06, 0.3, "triangle"), 60);
+      await sleep(300);
+    }
+
+    const moved = gravity(grid);
+    if (moved.length) { sync(); await sleep(170); }
+    if (!vanished) active.unshift(m.tile.id);
+    moved.forEach(x => { if (!active.includes(x)) active.push(x); });
+    dmg.melted.forEach(t => { if (!active.includes(t.id)) active.push(t.id); });   // 溶けた数字も合体チェック
+  }
+}
+
+function gameOver() {
+  over = true;
+  ghost.style.opacity = "0";
+  recordStage();
+  $("finalStage").textContent = stageLabel(stage);
+  $("finalScore").textContent = score.toLocaleString();
+  const newBest = !devRun && score > bestAtStart && score > 0;
+  const newStage = !devRun && stage > 1 && stage > bestStageAtStart;
+  lastNewBest = newBest;
+  ["newBest", "newStage"].forEach(id => $(id).classList.remove("on"));
+  setTimeout(() => { $("newBest").classList.toggle("on", newBest); $("newStage").classList.toggle("on", newStage); }, 250);
+  $("recordLine").textContent = `これまでの記録：ベスト ${best.toLocaleString()} ／ 最高ステージ ${bestStage.label}`;
+  setShare();
+  overlay.classList.add("show");
+  beep(150, 0.06, 0.4, "sawtooth");
+}
+
+async function doRise() {
+  const row = makeRiseRow();
+  row.forEach((t, c) => addTileEl(t, ROWS, c));
+  void field.offsetWidth;
+  const overflow = rise(grid, row);
+  riseSound();
+  sync();
+  tileEls.forEach((el, id) => { if (!findPos(grid, id)) place(el, -1, 0), el.classList.add("vanish"); });
+  await sleep(220);
+  if (overflow) return true;
+  await resolveAnimated(row.map(t => t.id));
+  return false;
+}
+
+async function drop(c) {
+  if (busy || over) return;
+  const r = landingRow(grid, c);
+  if (r < 0) { beep(110, 0.04, 0.1, "sawtooth"); return; }
+  busy = true;
+
+  const t = { id: nextId++, ...current };
+  addTileEl(t, -1, c);
+  void field.offsetWidth;
+  grid[r][c] = t;
+  sync();
+  ghost.style.opacity = "0";
+  await sleep(160);
+  dropSound();
+
+  await resolveAnimated([t.id]);
+  if (iceDebt > 0) await applyIce();   // 前に凍らせる数字がなかった分
+
+  if (pendingUps > 0) {
+    // 2048を消した → ステージアップ。盤面とお邪魔はそのまま引き継ぐ
+    while (pendingUps > 0) {
+      pendingUps--;
+      stage++;
+      stageTurns = 0;
+      clearFallPlan();
+      updateStage();
+      recordStage();
+      await showBanner();
+      if (await triggerObstacle()) { gameOver(); busy = false; return; }
+    }
+  } else {
+    stageTurns++;
+    if (stageDef(stage).every && stageTurns % stageDef(stage).every === 0) {
+      await sleep(150);
+      if (await triggerObstacle()) { gameOver(); busy = false; return; }
+      // お邪魔の連鎖で2048が消えた場合もステージアップ
+      while (pendingUps > 0) {
+        pendingUps--;
+        stage++;
+        stageTurns = 0;
+        clearFallPlan();
+        updateStage();
+        recordStage();
+        await showBanner();
+        if (await triggerObstacle()) { gameOver(); busy = false; return; }
+      }
+    }
+  }
+
+  advanceQueue();
+  updateStage();
+  ghost.style.opacity = "";
+  updateQueue();
+  sync();
+
+  if (grid[0].every(Boolean)) gameOver();
+  busy = false;
+}
+
+// --- 操作 ---
+function colFromEvent(e, el) {
+  const rect = el.getBoundingClientRect();
+  return Math.floor(((e.clientX - rect.left) / rect.width) * COLS);
+}
+[field, zone].forEach(el => {
+  el.addEventListener("pointermove", e => setCursor(colFromEvent(e, el)));
+  el.addEventListener("click", e => {
+    if (over) return;
+    const c = colFromEvent(e, el);
+    setCursor(c);
+    drop(c);
+  });
+});
+document.addEventListener("keydown", e => {
+  if (help.classList.contains("show")) { if (e.key === "Escape") closeHelp(); return; }
+  if (["ArrowLeft", "a"].includes(e.key)) { e.preventDefault(); setCursor(cursor - 1); }
+  if (["ArrowRight", "d"].includes(e.key)) { e.preventDefault(); setCursor(cursor + 1); }
+  if (["ArrowDown", " ", "s", "Enter"].includes(e.key)) { e.preventDefault(); drop(cursor); }
+});
+$("newGame").addEventListener("click", () => { if (!busy || over) newGame(); });
+$("retry").addEventListener("click", e => { e.stopPropagation(); newGame(); });
+
+// --- 開発用パネル：盤面を空にして、指定ステージから開始 ---
+const devSel = $("devStage");
+if (!DEV_MODE) $("dev").style.display = "none";
+// --- SNSシェア ---
+// シェアに付けるゲームのURL（空ならURLなしでシェア）
+const GAME_URL = /^https?:/.test(location.protocol) ? location.origin + location.pathname : "";
+let lastNewBest = false;
+function shareText() {
+  const lines = [`Drop 2048 でステージ${stageLabel(stage)}まで到達！`, `スコア ${score.toLocaleString()}`];
+  if (lastNewBest) lines[1] += "（自己ベスト更新）";
+  return lines.join("\n") + "\n#Drop2048";
+}
+function setShare() {
+  const text = shareText();
+  $("shareX").href = "https://x.com/intent/tweet?text=" + encodeURIComponent(text) + (GAME_URL ? "&url=" + encodeURIComponent(GAME_URL) : "");
+  $("shareLine").href = "https://line.me/R/share?text=" + encodeURIComponent(GAME_URL ? text + "\n" + GAME_URL : text);
+  $("shareCopy").textContent = "コピー";
+}
+$("shareCopy").addEventListener("click", e => {
+  e.stopPropagation();
+  const text = GAME_URL ? shareText() + "\n" + GAME_URL : shareText();
+  const done = () => { $("shareCopy").textContent = "コピーしました"; };
+  const fallback = () => {
+    // コピーできない環境では、テキストを選択状態にして手動でコピーしてもらう
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy") ? done() : null; } catch (err) {}
+    ta.remove();
+  };
+  try {
+    navigator.clipboard.writeText(text).then(done, fallback);
+  } catch (err) { fallback(); }
+});
+["shareX", "shareLine"].forEach(id => $(id).addEventListener("click", e => e.stopPropagation()));
+
+// --- テーマ切り替え（選んだテーマはこのブラウザに保存） ---
+function setTheme(name) {
+  if (!TILE_THEMES[name]) name = "orange";
+  theme = name;
+  document.documentElement.dataset.theme = name;
+  document.querySelectorAll("#themes .sw").forEach(b => b.classList.toggle("on", b.dataset.theme === name));
+  try { localStorage.setItem("drop2048Theme", name); } catch (e) {}
+  // 表示中のタイルを塗り直す
+  if (grid) sync();
+  if (ghost) updateQueue();
+  document.querySelectorAll(".sample .tile").forEach(el => paint(el, el._piece));
+}
+document.querySelectorAll("#themes .sw").forEach(b =>
+  b.addEventListener("click", e => { e.stopPropagation(); setTheme(b.dataset.theme); }));
+
+// --- お邪魔の説明ページ ---
+const help = $("help");
+document.querySelectorAll("[data-sample]").forEach(box => {
+  const type = box.dataset.sample;
+  const p = type === "stone" ? { v: 0, stone: true, hp: 2 }
+          : type === "ice" ? { v: 8, ice: true }
+          : { v: 16, chain: 2 };
+  const el = makeTile(p);
+  el._piece = p;
+  box.appendChild(el);
+});
+function openHelp(type) {
+  help.classList.add("show");
+  document.body.style.overflow = "hidden";
+  const card = type && $("help-" + type);
+  if (card) {
+    card.scrollIntoView({ block: "start" });
+    restart(card, "flash");
+    setTimeout(() => card.classList.remove("flash"), 1200);
+  } else {
+    help.scrollTop = 0;
+  }
+}
+function closeHelp() {
+  help.classList.remove("show");
+  document.body.style.overflow = "";
+}
+$("helpBtn").addEventListener("click", () => openHelp());
+$("helpClose").addEventListener("click", closeHelp);
+help.addEventListener("click", e => { if (e.target === help) closeHelp(); });
+document.querySelectorAll("[data-jump]").forEach(b =>
+  b.addEventListener("click", () => openHelp(b.dataset.jump)));
+// ステージ表示のお邪魔の説明をタップすると、そのお邪魔の説明へ
+$("descBox").addEventListener("click", () => {
+  const t = stageDef(stage).type;
+  if (t !== "none") openHelp(t);
+});
+
+// 組とお邪魔を選ぶと、そのお邪魔をその組の1番目（例：2-1）にして開始する
+const devList = [];
+STAGE_GROUPS.forEach((grp, g) => grp.forEach(d => devList.push({ group: g, def: d })));
+devList.forEach((x, i) => {
+  const o = document.createElement("option");
+  o.value = i;
+  const d = x.def;
+  o.textContent = `${x.group + 1}：` + (d.type === "none" ? "なし" : d.type === "stone" ? `石・耐久${d.hp}` : d.type === "ice" ? "氷" : d.type === "chain" ? "鎖" : d.type === "fall" ? `落下${d.count}個` : "せり上がり");
+  devSel.appendChild(o);
+});
+const devStart = () => { if (!busy || over) newGame(devList[Number(devSel.value)]); };
+$("devPrev").addEventListener("click", () => { devSel.value = Math.max(0, Number(devSel.value) - 1); devStart(); });
+$("devNext").addEventListener("click", () => { devSel.value = Math.min(devList.length - 1, Number(devSel.value) + 1); devStart(); });
+$("devGo").addEventListener("click", devStart);
+
+const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+let savedTheme = prefersDark ? "black" : "orange";
+try { savedTheme = localStorage.getItem("drop2048Theme") || savedTheme; } catch (e) {}
+setTheme(savedTheme);
+newGame();
+</script>
+</body>
+</html>
